@@ -18,11 +18,9 @@ import time
 # import sys
 # import machine
 import RPi.GPIO as GPIO
+from gpiozero import DigitalInputDevice, LED
 import spidev
 # import numpy as np
-
-GPIO.setwarnings(False)
-GPIO.setmode(GPIO.BCM)
 
 ###############################################################################
 # SPI Settings with spidev library
@@ -44,12 +42,18 @@ registerMap = [{0x00}, {0x080060}, {0x000117}, {0x000000}]
 registerSize = [{1}, {3}, {3}, {3}, {1}, {1}, {3}, {3}]
 
 AD7193_CS_PIN = 8         # define the chipselect CEO in GPIO8 or pin 24
+led = LED(21)             # led on GPIO21
+rdy_input = DigitalInputDevice(26)  # /RDY interrupt on GPIO26
+
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(AD7193_CS_PIN, GPIO.OUT)
 
 AD7193_COMM_WEN = 0
-AD7193_COMM_WRITE = 0x0
-AD7193_COMM_READ = 0x1
-AD7193_COMM_ADDR = 0x0
-AD7193_COMM_CREAD = 0x1
+AD7193_COMM_WRITE = 0
+AD7193_COMM_READ = 1
+AD7193_COMM_ADDR = 0
+AD7193_COMM_CREAD = 1
 
 AD7193_REG_COMM = 0       # WO, 8-bit
 AD7193_REG_STAT = 0       # WO, 8-bit
@@ -62,11 +66,11 @@ AD7193_REG_OFFSET = 6     # WR, 24-bit
 AD7193_REG_FULLSCALE = 7  # WR, 24-bit
 
 # Communication Register Bit Designation (AD7193_REG_COM)
-AD7193_COMM_WEN(0 << 7)       # Write Enable
-AD7193_COMM_WRITE(0 << 6)     # Write Operation
-AD7193_COMM_READ(1 << 6)      # Read Operation
-AD7193_COMM_ADDR(((0) & 0x7) << 3)  # Register Address
-AD7193_COMM_CREAD(1<<2)       # Continous Read of Data Register
+AD7193_COMM_WEN = AD7193_COMM_WEN << 7            # Write Enable
+AD7193_COMM_WRITE = AD7193_COMM_WRITE << 6        # Write Operation
+AD7193_COMM_READ = AD7193_COMM_READ << 6          # Read Operation
+AD7193_COMM_ADDR = (int(AD7193_COMM_ADDR) & 0x7) << 3  # Register Address
+AD7193_COMM_CREAD = AD7193_COMM_CREAD <<2         # Continous Read of Data Register
 
 send_buf = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
 
@@ -79,21 +83,169 @@ def reverse_bits(byte):
     return byte
 
 
-# Function ReadADCChannel
-def read_adc_channel():
-    """pass"""
+def reset():
+    """Reset the ADC"""
+    print('Reset AD7193...')
+
+    GPIO.output(AD7193_CS_PIN, GPIO.LOW)
+    led.off()
+    time.sleep(0.1)
+
+    for i in range(6):
+        spi.xfer2([0xFF], 8000000)
+
+    GPIO.output(AD7193_CS_PIN, GPIO.HIGH)
+    led.on()
+    time.sleep(0.1)
 
 
-def set_channel():
-    """pass"""
+def read_adc_channel(channel):
+    """Read ADC Channel"""
+    set_channel(channel)
+
+    # write command to initial conversion
+    initiate_single_conversion()
+    time.sleep(0.1)   # hardcoded wait time for data to be ready
+    # should scale the wait time by averaging
+
+    wait_for_adc()
+
+    ADCdata = read_adc_data2()
+    time.sleep(0.01)
+
+    return ADCdata
+
+
+def set_channel(channel):
+    """generate Channel settings bits for Configuration write"""
+    shiftvalue = 0x000100
+    channelBits = shiftvalue << channel
+    print('channelBits is: ', channelBits)
+    manipulatedData = 0
+    regAddress = AD7193_REG_CONF
+
+    # Write Channel bits to CONF_REG, keeping other bits as is
+    manipulatedData = read_regiter_value(regAddress, regiterSize[regAddress], 1)
+    manipulatedData &= 0xFC00FF   # Keep all bit values except Channel bits
+    manipulatedData |= channelBits
+
+    set_register_value(regAddress, manipulatedData,  regiterSize[regAddress], 1)
+    time.sleep(0.01)
 
 
 def initiate_single_conversion():
-    """pass"""
+    """Initiate Single Conversion"""
+    print('   Initiate Single Conversion... (Device will go into low power mode \
+        when conversion complet)')
+
+    manipulateData = 0
+    regAddress = AD7193_REG_MODE
+
+    manipulateData = read_register_value(regAddress, registerSize[regAddress], 1)
+    manipulateData &= 0x1FFFFF   # Keep all bit values except Mode bits
+    manipulateData |= 0x200000   # single conversion mode bits
+
+    set_register_value(regAddress, manipulateData, registerSize[regAddress], 1)
+
+    manipulateData =  read_register_value(regAddress, manipulateData, registerSize[regAddress], 1)
+    manipulateData &= 0xE00000   # Keep only the mode bits
+    print('current mode: ', " ".join(hex(n) for n in manipulateData))
+
+    # Lire etat du bit RDY du registre status
+    rdyState = 1
+    regAddress = AD7193_REG_STAT
+    rdyState = read_register_value(regAddress, registerSize[regAddress], 1)
+    print('readyState: ', " ".join(hex(n) for n in rdyState))
+
+
+def calibrate():
+    """Initiate Internal Calibration"""
+    print("\nInitiate Internal Calibration, starting with Zero-scale calibration...");
+
+    # Begin Communication cycle, bring CS low manually
+    digitalWrite(AD7193_CS_PIN, LOW);
+    delay(100);
+
+    manipulatedData = 0;
+    regAddress = AD7193_REG_MODE;
+
+    manipulatedData = read_register_value(regAddress, registerSize[regAddress], 1);
+    manipulatedData &= 0x1FFFFF    # keep all bit values except Mode bits
+    manipulatedData |= 0x800000    # internal zero scale calibration
+
+    set_register_value(regAddress, manipulatedData, registerSize[regAddress], 1)
+
+    manipulatedData = read_register_value(regAddress, registerSize[regAddress], 1);
+    manipulatedData &= 0xE00000    # keep only the mode bits
+    print("current mode: ", " ".join(hex(n) for n in manipulatedData))
+
+    wait_for_adc()
+    time.sleep(0.1);		   # Beng, comment it when works
+
+    print("\n\nNow full-scale calibration...");
+    # --------------------------
+
+    manipulatedData = read_register_value(regAddress, registerSize[regAddress], 1);
+    manipulatedData &= 0x1FFFFF    # keep all bit values except Mode bits
+    manipulatedData |= 0xA00000    # system full scale calibration
+
+    set_register_value(regAddress, manipulatedData, registerSize[regAddress], 1);
+
+    manipulatedData = read_register_value(regAddress, registerSize[regAddress], 1);
+    manipulatedData &= 0xE00000    # keep only the mode bits
+    print("current mode: ", " ".join(hex(n) for n in manipulatedData))
+
+    wait_for_adc()
+    time.sleep(0.1)                # Beng, comment when works
+
+    manipulatedData = read_register_value(regAddress, registerSize[regAddress], 1);
+    manipulatedData &= 0x008000    # keep only the mode bits
+    print("SYNC mode: ", " ".join(hex(n) for n in manipulatedData))
+
+    GPIO.output(AD7193_CS_PIN, HIGH)
+    time.sleep(0.1)
 
 
 def wait_for_adc():
-    """pass"""
+    """Wait ADC while is busy"""
+    breakTime = 0
+
+    print('\nWainting for Conversion...')
+
+    manipulateData = 0
+    # regAddress = AD7193_REG_MODE
+    rdyState = 1
+    endTime = 0
+    elapsedTime = lambda: int(round(time.time() * 1000))   # millis()
+    while True:
+        regAddress = AD7193_REG_MODE
+        manipulateData = read_register_value(regAddress, registerSize[regAddress], 1)
+        manipulateData &= 0xE00000   # keep only the mode bits
+        rdyState = 1
+	if manipulatedData == 0x800000:
+            # if in internal zero scale calibration mode
+            time.sleep(0.1)   # delay since we're still calibrating
+        elif manipulatedData == 0xA00000:
+            # if in internal full scale calibration mode
+            time.sleep(0.1)   # delay since we're still calibrating
+        regAddress = AD7193_REG_STAT;
+        rdyState = read_register_value(regAddress, registerSize[regAddress], 1);
+        rdyState &= 0x80      # keep only the ready bit
+
+        if rdyState == 0x00:
+            # Break if ready goes low
+            print('breakTime: ')
+            break
+        if breakTime > 15000:
+            # Break after five seconds - avoids program hanging up
+            print("Data Ready never went low!")
+            print("breakTime: ", breakTime)
+            endTime = lambda: int(round(time.time() * 1000))
+            elapsedTime = endTime - initTime;
+            print("elapsedTime: ", elapsedTime)
+            print("current mode: ",  " ".join(hex(n) for n in manipulatedData))
+            break;
+        breakTime = breakTime + 1
 
 
 #    def magic(num_list):   # [1, 2, 3]
@@ -128,7 +280,7 @@ def swap_data(data):
     # print(swap_bytes)
 
 
-def read_reg_value(reg_addr, bytes_number, modify_cs):
+def read_register_value(reg_addr, bytes_number, modify_cs):
     """Read but not print register value to maintain compatibility"""
     write_byte = 0
     byte_index = 0
@@ -149,7 +301,7 @@ def read_reg_value(reg_addr, bytes_number, modify_cs):
 
     return buffer
 
-def set_reg_value(reg_addr, register_value, bytes_number, modify_cs):
+def set_register_value(reg_addr, register_value, bytes_number, modify_cs):
     """Writes data into a register"""
     command_byte = 0
     tx_buffer = [0x00, 0x00, 0x00, 0x00]
@@ -163,20 +315,22 @@ def set_reg_value(reg_addr, register_value, bytes_number, modify_cs):
     tx_buffer[3] = (register_value >> 24) & 0x000000FF
     if modify_cs == 1:
         GPIO.output(AD7193_CS_PIN, GPIO.LOW)
-        time.sleep(100)
+        time.sleep(0.1)
 
     spi.xfer2(command_byte)
     while bytes_number > 0:
-        spi.xfer2(tx_buffer[bytes_number - 1])
+        spi.xfer2(tx_buffer[bytes_number - 1], 8000000)
         bytes_number -= 1
 
     if modify_cs == 1:
         GPIO.output(AD7193_CS_PIN, GPIO.HIGH)
-        time.sleep(100)
+        time.sleep(0.1)
 
     print('    Write Register Address: ', reg_addr)
-    print(', command: ', command_byte)
-    print(',      sent: ', register_value)
+    # print(', command: ', command_byte)
+    print(', command: ', " ".join(hex(n) for n in command_byte))
+    # print(',      sent: ', register_value)
+    print(',      sent: ', " ".join(hex(n) for n in register_value))
 
 
 # Start read ADC Data
@@ -205,7 +359,7 @@ def read_adc_data():
             wr_buf = [0x58, 0x00, 0x00, 0x00]
             # To enable continuous read, Instruction 01011100 must be written
             # to the communications register. Then uncomment the below ligne
-            wr_buf[0] = [0x5C, 0x00, 0x00, 0x00]
+            wr_buf = [0x5C, 0x00, 0x00, 0x00]
             # swap_wr_buf = swap_data(wr_buf)
             receive_buffer = spi.xfer2(wr_buf, 8000000, 1)
             receive_buffer = receive_buffer[1:]
@@ -214,6 +368,14 @@ def read_adc_data():
             return int_buffer
         except KeyboardInterrupt:
             spi.close()
+
+
+def read_adc_data2() -> UInt128:
+    buffer = 0
+    regAddress = AD7193_REG_DATA
+
+    buffer = read_register_value(regAddress, registerSize[regAddress], 1)
+    return buffer
 
 
 def set_pga_gain(gain):
@@ -364,7 +526,8 @@ def data_to_voltage(raw_data) -> float:
 # Setting up AD7193
 ########################################
 # resp = spi.xfer2([0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
-resp = spi.xfer2([0xFF, 0xFF, 0xFF, 0xFF], 8000000, 10)
+resp = spi.xfer2([0xFF, 0xFF, 0xFF, 0xFF, 0xFF], 8000000, 100)
+# reset()
 # resp_list = resp[1:]
 # temp = ''.join(map(str, resp_list))
 print('resp: ', resp)
@@ -431,6 +594,7 @@ while True:
     # swap_send_buf = swap_data(send_buf)
     # resp = spi.xfer2(send_buf)
     # time.sleep(0.1)
+    reset()
 
     # [0x58] : Demande une Lecture dans DATA_REG depuis le COM_REG
     # pylint: disable=C0103
