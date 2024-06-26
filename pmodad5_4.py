@@ -17,11 +17,10 @@
 import time
 # import sys
 # import machine
-# pylint: disable=E1101
 import RPi.GPIO as GPIO
 from gpiozero import DigitalInputDevice, LED
 import spidev
-import numpy as np
+# import numpy as np
 
 ###############################################################################
 # SPI Settings with spidev library
@@ -38,17 +37,13 @@ spi.mode = 0b11             # spi in mode 3
 ###############################################################################
 
 # For AD7193 device Registers Map
-# registerMap = [{0x00}, {0x080060}, {0x000117}, {0x000000}]
-registerMap = np.array([0x00, 0x080060, 0x000117, 0x000000])
+registerMap = [{0x00}, {0x080060}, {0x000117}, {0x000000}]
 
-# registerSize = [{1}, {3}, {3}, {3}, {1}, {1}, {3}, {3}]
-registerSize = np.array([1, 3, 3, 3, 1, 1, 3, 3])
+registerSize = [{1}, {3}, {3}, {3}, {1}, {1}, {3}, {3}]
 
 AD7193_CS_PIN = 8         # define the chipselect CEO in GPIO8 or pin 24
 led = LED(21)             # led on GPIO21
 rdy_input = DigitalInputDevice(26)  # /RDY interrupt on GPIO26
-HIGH = 1
-LOW = 0
 
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
@@ -103,18 +98,15 @@ def reset():
 
     GPIO.output(AD7193_CS_PIN, GPIO.LOW)
     led.off()
-    time.sleep(0.5)
+    time.sleep(0.1)
 
-    x = 0
-    tx = [255]
-    for x in range(0, 5):
-        spi.writebytes(tx)
-        if x == 5:
-            break
+    n = 0
+    while n < 6:
+        spi.xfer2([0xFF], 8000000)
 
     GPIO.output(AD7193_CS_PIN, GPIO.HIGH)
     led.on()
-    time.sleep(0.5)
+    time.sleep(0.1)
 
 
 def read_adc_channel(channel):
@@ -143,49 +135,44 @@ def set_channel(channel):
     reg_address = AD7193_REG_CONF
 
     # Write Channel bits to CONF_REG, keeping other bits as is
-    # bytenum = int(next(iter(registerSize[reg_address])))
-    bytenum = registerSize[reg_address]
-    # print('Byte number is: ', bytenum)
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0xFC00FF   # Keep all bit values except Channel bits
     manip_data |= channel_bits
 
-    set_reg_value(reg_address, manip_data, bytenum, 1)
+    set_reg_value(reg_address, manip_data,  registerSize[reg_address], 1)
     time.sleep(0.01)
 
 
 def initiate_single_conversion():
     """Initiate Single Conversion"""
-    print('   Initiate Single Conversion... ')
-    print('(Device will go into low power mode when conversion complet)')
+    print('   Initiate Single Conversion... \
+          (Device will go into low power mode \
+        when conversion complet)')
 
     manip_data = 0
     reg_address = AD7193_REG_MODE
 
-    bytenum = registerSize[reg_address]
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0x1FFFFF   # Keep all bit values except Mode bits
     manip_data |= 0x200000   # single conversion mode bits
 
-    set_reg_value(reg_address, manip_data, bytenum, 1)
+    set_reg_value(reg_address, manip_data, registerSize[reg_address], 1)
 
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0xE00000   # Keep only the mode bits
-    # print('Type of manip_data is: ', type(manip_data))
-    # strHex = "0x%0.2" % manip_data
-    print('current mode of single conversion: ', hex(manip_data))
+    print('current mode: ', " ".join(hex(n) for n in manip_data))
 
     # Lire etat du bit RDY du registre status
     rdy_state = 1
     reg_address = AD7193_REG_STAT
-    bytenum = registerSize[reg_address]
-    rdy_state = rd_reg_value(reg_address, bytenum, 1)
-    print('readyState: ', hex(rdy_state))
+    rdy_state = rd_reg_value(reg_address, registerSize[reg_address], 1)
+    print('readyState: ', " ".join(hex(n) for n in rdy_state))
 
 
 def calibrate():
     """Initiate Internal Calibration"""
-    print("\nInitiate Internal Calibration, starting with Zero-scale calibration...")
+    print("\nInitiate Internal Calibration, \
+          starting with Zero-scale calibration...")
 
     # Begin Communication cycle, bring CS low manually
     GPIO.output(AD7193_CS_PIN, LOW)
@@ -194,16 +181,15 @@ def calibrate():
     manip_data = 0
     reg_address = AD7193_REG_MODE
 
-    bytenum = registerSize[reg_address]
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0x1FFFFF    # keep all bit values except Mode bits
     manip_data |= 0x800000    # internal zero scale calibration
 
-    set_reg_value(reg_address, manip_data, bytenum, 1)
+    set_reg_value(reg_address, manip_data, registerSize[reg_address], 1)
 
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0xE00000    # keep only the mode bits
-    print("current mode of zero calibration: ", hex(manip_data))
+    print("current mode: ", " ".join(hex(n) for n in manip_data))
 
     wait_for_adc()
     time.sleep(0.1)		   # Beng, comment it when works
@@ -211,22 +197,22 @@ def calibrate():
     print("\n\nNow full-scale calibration...")
     # --------------------------
 
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0x1FFFFF    # keep all bit values except Mode bits
     manip_data |= 0xA00000    # system full scale calibration
 
-    set_reg_value(reg_address, manip_data, bytenum, 1)
+    set_reg_value(reg_address, manip_data, registerSize[reg_address], 1)
 
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0xE00000    # keep only the mode bits
-    print("current mode of full calibration: ", hex(manip_data))
+    print("current mode: ", " ".join(hex(n) for n in manip_data))
 
     wait_for_adc()
     time.sleep(0.1)                # Beng, comment when works
 
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0x008000    # keep only the mode bits
-    print("SYNC mode: ", hex(manip_data))
+    print("SYNC mode: ", " ".join(hex(n) for n in manip_data))
 
     GPIO.output(AD7193_CS_PIN, HIGH)
     time.sleep(0.1)
@@ -237,25 +223,20 @@ def set_filter_rate(filter_rate):
     print("\nSetting Filter Rate Select Bits to ", filter_rate)
 
     if filter_rate > 0x3ff:
-        print("\tERROR - Invalid Filter Rate Setting - no changes made.  Filter Rate is a 10-bit value")
+        print("\tERROR - Invalid Filter Rate Setting - \
+              no changes made.  Filter Rate is a 10-bit value")
         return
 
     manip_data = 0
     reg_address = AD7193_REG_MODE
 
-    bytenum = registerSize[reg_address]
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     # keep all bit values except output data rate setting bits
     manip_data &= 0xFFFC00
     manip_data |= filter_rate
 
-    set_reg_value(reg_address, manip_data, bytenum, 1)
-
-
-def foo_time():
-    """Time passed"""
-    t = int(round(time.time() * 1000))   # millis()
-    return t
+    set_reg_value(reg_address, manip_data,
+                  registerSize[reg_address], 1)
 
 
 def wait_for_adc():
@@ -268,15 +249,10 @@ def wait_for_adc():
     # reg_address = AD7193_REG_MODE
     rdy_state = 1
     end_time = 0
-    # This is a placeholder for correct code for this message.
-    # --fail-on=I1101
-    # init_time = lambda: int(round(time.time() * 1000))   # millis()
-    init_time = foo_time()
+    init_time = lambda: int(round(time.time() * 1000))   # millis()
     while True:
         reg_address = AD7193_REG_MODE
-
-        bytenum = registerSize[reg_address]
-        manip_data = rd_reg_value(reg_address, bytenum, 1)
+        manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
         manip_data &= 0xE00000   # keep only the mode bits
         rdy_state = 1
         if manip_data == 0x800000:
@@ -286,8 +262,7 @@ def wait_for_adc():
             # if in internal full scale calibration mode
             time.sleep(0.1)   # delay since we're still calibrating
         reg_address = AD7193_REG_STAT
-        bytenum = registerSize[reg_address]
-        rdy_state = rd_reg_value(reg_address, bytenum, 1)
+        rdy_state = rd_reg_value(reg_address, registerSize[reg_address], 1)
         rdy_state &= 0x80      # keep only the ready bit
 
         if rdy_state == 0x00:
@@ -297,11 +272,10 @@ def wait_for_adc():
             # Break after five seconds - avoids program hanging up
             print("Data Ready never went low!")
             print("breakTime: ", break_time)
-            # end_time = lambda: int(round(time.time() * 1000))
-            end_time = foo_time()
+            end_time = lambda: int(round(time.time() * 1000))
             elapsed_time = end_time - init_time
             print("elapsedTime: ", elapsed_time)
-            print("current mode is in REG_MODE ?: ",  hex(manip_data))
+            print("current mode: ",  " ".join(hex(n) for n in manip_data))
             # break
         break_time = break_time + 1
 
@@ -336,19 +310,16 @@ def rd_reg_value(reg_address, bytes_number, modify_cs):
     write_byte = 0
     byte_index = 0
     buffer = 0
-    # receive_buffer = 0
 
     write_byte = AD7193_COMM_READ | ad7193_comm_addr(reg_address)
-    print('write_byte', write_byte)
     if modify_cs == 1:
         GPIO.output(AD7193_CS_PIN, GPIO.LOW)
 
-    spi.writebytes([write_byte])   # Envoi le 1er byte de cammande
-    # print('Ici')
+    spi.xfer2(write_byte)   # Envoi le 1er byte de cammande
     while byte_index < bytes_number:
         # Lecture de donnee en mode MSB FIRST
-        receive_buffer = spi.xfer2([0], 8000000)
-        buffer = (buffer << 8) + receive_buffer[0]
+        receive_buffer = spi.xfer2(0)
+        buffer = (buffer << 8) + receive_buffer
         byte_index += 1
 
     if modify_cs == 1:
@@ -363,9 +334,8 @@ def set_reg_value(reg_address, register_value, bytes_number, modify_cs):
     command_byte = 0
     tx_buffer = [0x00, 0x00, 0x00, 0x00]
 
-    command_byte = AD7193_COMM_WEN | AD7193_COMM_WRITE | ad7193_comm_addr(reg_address) | ad7193_comm_cread(1)
-    print('set reg value command byte is: ', hex(command_byte))
-    print('register value is: ', register_value)
+    command_byte = AD7193_COMM_WEN | AD7193_COMM_WRITE | \
+        ad7193_comm_addr(reg_address) | ad7193_comm_cread(1)
 
     tx_buffer[0] = (register_value >> 0) & 0x000000FF
     tx_buffer[1] = (register_value >> 8) & 0x000000FF
@@ -375,21 +345,10 @@ def set_reg_value(reg_address, register_value, bytes_number, modify_cs):
         GPIO.output(AD7193_CS_PIN, GPIO.LOW)
         time.sleep(0.1)
 
-    spi.xfer2([command_byte])   # Envoi le 1er byte de cammande
-    # print('bytes_number: ', bytes_number)
-    # try:
-        # for i in bytes_number:
-            # puis envoi octet par octet de data en MSB first
-            # spi.xfer2(hex(list(tx_buffer[bytes_number - 1])), 8000000)
-            # bytes_number -= 1
-            # print("      Loop i: ", i)
-    # except TypeError:
-        # print("Object must be an iterable")
+    spi.xfer2(command_byte)   # Envoi le 1er byte de cammande
     while bytes_number > 0:
         # puis envoi octet par octet de data en MSB first
-        tx_list = [tx_buffer[bytes_number - 1]]
-        spi.xfer2(tx_list, 8000000)
-        print('tx_list: ', tx_list)
+        spi.xfer2(tx_buffer[bytes_number - 1], 8000000)
         bytes_number -= 1
 
     if modify_cs == 1:
@@ -397,11 +356,10 @@ def set_reg_value(reg_address, register_value, bytes_number, modify_cs):
         time.sleep(0.1)
 
     print('    Write Register Address: ', reg_address)
-
-    print(', command: ', hex(command_byte))
-    # print(', command: ', " ".join(hex(n) for n in command_byte))
-    print(',    sent: ', hex(register_value))
-    # print(',      sent: ', " ".join(hex(n) for n in register_value))
+    # print(', command: ', command_byte)
+    print(', command: ', " ".join(hex(n) for n in command_byte))
+    # print(',      sent: ', register_value)
+    print(',      sent: ', " ".join(hex(n) for n in register_value))
 
 
 # Start read ADC Data
@@ -446,34 +404,26 @@ def rd_adc_data():
     buffer = 0
     reg_address = AD7193_REG_DATA
 
-    bytenum = registerSize[reg_address]
-    print("BytesNumber: ", bytenum)
-    print("BufferRd: ", buffer)
-    buffer = rd_reg_value(reg_address, bytenum, 1)
+    buffer = rd_reg_value(reg_address, registerSize[reg_address], 1)
     return buffer
 
 
-def app_state_value_to_data(app_value):
+def app_state_value_to_data(value):
     """Append/Configure Pmod AD5 module. Set DAT_STA to 1"""
-    print("Enabling DAT_STA Bit (appends status register to data register when reading)")
+    print("Enabling DAT_STA Bit (appends status register to data \
+          register when reading)")
+
+    registerMap[1] |= 0x100000  # set DAT_STA to 1
+
+    set_reg_value(1, registerMap[1], registerSize[1], 1)
+    registerSize[3] = 4  # change register size to 4, b/c status is append
 
     manip_data = 0
     reg_address = AD7193_REG_MODE
 
-    bytenum = registerSize[reg_address]
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
-    type(manip_data)
-    manip_data |= 0x100000  # set DAT_STA bit
-    type(manip_data)
-    hex_data = hex(manip_data)
-    int_data = int(hex_data, 16)
-    print('manip_data: ', int_data)
-    set_reg_value(reg_address, int_data, bytenum, 1)
-    # registerSize[3] = 4  # change register size to 4, b/c status is append
-
     # lire les 24bit du MODE register
-    # manip_data = rd_reg_value(reg_address, bytenum, 1)
-    if app_value == 1:
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
+    if value == 1:
         manip_data |= 0x100000  # set DAT_STA bit
         registerSize[3] = 4
         # increase data register size by one since STA_REG (one byte) \
@@ -482,7 +432,7 @@ def app_state_value_to_data(app_value):
         # maintain cleared DAT_STA bit
         registerSize[3] = 3  # keep DATA_REG size at the default 3 bytes
 
-    set_reg_value(reg_address, int_data, bytenum, 1)
+    set_reg_value(reg_address, manip_data, registerSize[reg_address], 1)
 
 
 def set_pga_gain(gain):
@@ -512,16 +462,12 @@ def set_pga_gain(gain):
     reg_address = AD7193_REG_CONF
 
     # keep all bit value except gain bitsf
-    # print('Here')
-    bytenum = registerSize[reg_address]
-    print(bytenum)
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
-    # manip_data = rd_reg_value(reg_address, 4, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0xFFFFF8
     manip_data |= pga_setting
     print('pga setting: ', pga_setting)
 
-    set_reg_value(reg_address, manip_data, bytenum, 1)
+    set_reg_value(reg_address, manip_data, registerSize[reg_address], 1)
     # [0x10] : CONFIG_REG is selected
     # [0x80] : chop is anabled, vref in REFIN1 REFSEL=0, as differential inputs
     # Pseudo Bit=0
@@ -538,76 +484,6 @@ def set_pga_gain(gain):
     # time.sleep(0.5)
 
 
-def set_polarity(polarity):
-    """Set Polarity"""
-    print("\nSetting polarity to ", polarity)
-
-    # gain_setting = 0xFFFFF7
-    gain_setting = 0
-    gpolarity = polarity << 3
-    mpolarity_gain = 0
-
-    reg_address = AD7193_REG_CONF
-
-    bytenum = registerSize[reg_address]
-    pga_setting = rd_reg_value(reg_address, bytenum, 1)
-    pga_setting &= 0x000007  # keep only the PGA setting bits
-
-    # unipolar operation mode
-    if polarity == 1:
-        # gain_setting = 0x0
-        gain_setting = pga_setting
-        print("Polarity = ", polarity)
-
-    # bipolar operation mode
-    if polarity == 0:
-        # gain_setting = 0x0;
-        gain_setting = pga_setting
-        print("Polarity = ", polarity)
-
-    mpolarity_gain = gpolarity | gain_setting
-
-    # registerMap[reg_address] = ReadRegisterValue(reg_address, \
-    # registerSize[reg_address], 1);
-    # keep all bit values except polarity bit and gain
-    registerMap[reg_address] &= 0xFFFFF0
-    registerMap[reg_address] |= mpolarity_gain
-
-    set_reg_value(reg_address, registerMap[reg_address], bytenum, 1)
-    time.sleep(0.01)
-
-
-def set_chop(chop):
-    """Setting chop to"""
-    # print("Setting chop to", chop)
-
-    # manip_data = 0
-    # mchop = 0
-
-    reg_address = AD7193_REG_CONF
-
-    # manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
-    # keep all bits values except chop bit
-    # manip_data &= 0x7FFFFF
-
-    # Chop enabled
-    if chop == 1:
-        # mchop = manip_data | 0x800000  # set chop bit
-        registerMap[reg_address] |= 0x800000   # set chop bit to 1
-        print("Chop = ", chop)
-
-    # Chop unabled
-    if chop == 0:
-        # mchop = manip_data  # clear chop bit
-        registerMap[reg_address] &= 0x7FFFFF  # clear chop bit to 0
-        print("Chop = ", chop)
-
-    # set_reg_value(reg_address, mChop, registerSize[reg_address], 1)
-    bytenum = registerSize[reg_address]
-    set_reg_value(reg_address, registerMap[reg_address], bytenum, 1)
-    time.sleep(0.01)
-
-
 def set_averaging(averaging):
     """> to improve rms noise"""
     print("\nSetting Averaging Bits to ", averaging)
@@ -620,28 +496,25 @@ def set_averaging(averaging):
     manip_data = 0
     reg_address = AD7193_REG_MODE
 
-    bytenum = registerSize[reg_address]
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0xFCFFFF  # keep all bit values except averaging setting bits
     manip_data |= averaging
 
-    bytenum = registerSize[reg_address]
-    set_reg_value(reg_address, manip_data, bytenum, 1)
+    set_reg_value(reg_address, manip_data, registerSize[reg_address], 1)
 
 
-def set_pseudodiff_inputs(ps_value):
+def set_pseudodiff_inputs(value):
     """Set Pseudo Differential input configuration..."""
     print("Changing differential input configuation...")
 
     manip_data = 0
     reg_address = AD7193_REG_CONF
 
-    # Bipolar calculation-> ps_value = 0. Unipolar calculation -> ps_value = 1
-    bytenum = registerSize[reg_address]
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
+    # Bipolar calculation-> value = 0. Unipolar calculation -> value = 1
+    manip_data = rd_reg_value(reg_address, registerSize[reg_address], 1)
     manip_data &= 0xFBFFFF  # keep all bit values except psuedo bit
 
-    if ps_value == 1:
+    if value == 1:
         manip_data |= 0x040000  # set psuedo bit
         mpseudo = manip_data >> 18
         print("Pseudo mode is activate")
@@ -651,9 +524,9 @@ def set_pseudodiff_inputs(ps_value):
         mpseudo = manip_data >> 18
         print("Pseudo bit = ", mpseudo)
 
-    # registerMap[reg_address] = manip_data
-    # set_reg_value(reg_address, registerMap[reg_address], bytenum, 1)
-    set_reg_value(reg_address, manip_data, bytenum, 1)
+    registerMap[reg_address] = manip_data
+    set_reg_value(reg_address, registerMap[reg_address],
+                  registerSize[reg_address], 1)
 
 
 def data_to_voltage(raw_data) -> float:
@@ -662,38 +535,25 @@ def data_to_voltage(raw_data) -> float:
     pga_gain = 0
     m_vref = float(2.5)
 
-    manip_data = 0
-    reg_address = AD7193_REG_CONF
-    # mpseudo = 0
-    # bpseudo = 0
-
-    bytenum = registerSize[reg_address]
-    mcutoff = rd_reg_value(reg_address, bytenum, 1)
-    mcutoff &= 0x800000  # keep only Chop bit
-
-    # Bipolar calculation -> value = 0. Unipolar calculation -> value = 1
-    manip_data = rd_reg_value(reg_address, bytenum, 1)
-    manip_data &= 0xFBFFFF  # keep all bit values except psuedo bit
-
-    # mpseudo = manip_data | 0x040000  # set Pseudo bit
-
-    mpolarity = rd_reg_value(reg_address, bytenum, 1)
-    mpolarity &= 0x000008  # keep only polarity bits
-    # mpolarity = (mBuffer >> 3)
-
-    pga_setting = rd_reg_value(reg_address, bytenum, 1)
-    pga_setting &= 0x000007  # keep only the PGA setting bits
-
-    print("PGASetting = ", pga_setting)
-
-    pga_gain = 0
+    # [0x10] : CONFIG_REG is selected
+    # [0x00] : chop is disabled, as differential inputs
+    # [0x00] : AIN1(+) and AIN2(-) are selected
+    # [0xC0] : burn=1 burnout currents are anable, REFDET on, BUF=0 input 50mV
+    # below AGND to 50mV above AVDD, bipolar operation, gain = 1
+    # When BUF=0 the analog voltage on the analog input pins can be from 50mV
+    # below AGND to 50mV above AVDD
+    # send_buf = [0x10, 0x00, 0x00, 0xC0]
+    # swap_send_buf = swap_data(send_buf)
+    # resp = spi.xfer2(send_buf)
+    # print('Set PGA Gain = 1, Buffer = 1', resp)
+    # time.sleep(0.5)
 
     # keep only the polarity bit
-    # m_polarity = join_num(registerMap[2]) & 0x000008
-    # print('Polarity', m_polarity)
+    m_polarity = join_num(registerMap[2]) & 0x000008
+    print('Polarity', m_polarity)
 
     # keep only the PGA setting bits
-    # pga_setting = join_num(registerMap[2]) & 0x000007
+    pga_setting = join_num(registerMap[2]) & 0x000007
     # print('pga setting: ', pga_setting)
 
     if pga_setting == 0:
@@ -711,49 +571,18 @@ def data_to_voltage(raw_data) -> float:
     else:
         pga_gain = 1
 
-    print("Cutoff = ", mcutoff)
-    print("PGA Gain = ", pga_gain)
-
-    # Vref is defined as REFINx(+) - REFINx(-), so either default 2.5V or other
-    # other is limited to -(AVdd -1.25V)/gain to +(AVdd -1.25V)/gain
-    # REFIN+ inputs themselves limited between 1V and AVdd
-    # REFIN- inputs limited to AGND to (AVdd -1V)
-
     # print('PGA Gain: ', pga_gain )
     # println(pga_gain)
-    # set_pga_gain(1)
+    set_pga_gain(1)
 
-    if mpolarity == 8:  # unipolar
-        mpseudo = manip_data | 0x040000  # set pseudo bit
-        bpseudo = mpseudo >> 18
-        bpseudo &= 0x000001  # keep only pseudo bit
-        print("Pseudo = ", " ".join(hex(n) for n in bpseudo))
-        print("\nunipolar calculation")
-        # print("Gain was: ", PGAGain)
-        print("raw data was: ", raw_data)
-        # following equation is a rearrangement of the one listed on pg 33 of\
-        # the AD7193 datasheet it was rearranged from:
-        # Code = (2^24 * AnalogInputVoltage * PGAGain)/Vref
-        # to: AnalogInputVoltage = [Code / (2^24 * PGAGain)] * Vref
+    if m_polarity == 1:
         # voltage = ((double)raw_data / 16777216 / pga_gain) * m_vref
         voltage = (float(raw_data) / 16777216 / pga_gain) * m_vref
-    if mpolarity == 0:  # bipolar
-        mpseudo = manip_data & 0xFBFFFF  # clear pseudo bit
-        bpseudo = mpseudo >> 18
-        bpseudo &= 0x000001  # keep only pseudo bit
-        print("Pseudo = ", " ".join(hex(n) for n in bpseudo))
-        print("\nbipolar calculation")
-        # print("Gain was: ", PGAGain)
-        print("raw data was: ", raw_data)
-        # following equation is a rearrangement of the one listed on pg 33
-        # of the AD7193 datasheet it was rearranged from:
-        # Code = 2^23 * [AnalogInputVoltage * PGAGain)/Vref + 1]
-        # to: [(Code / 2^23) - 1] * (Vref / PGAGain)
+    if m_polarity == 0:
         voltage = (float(raw_data) / float(8388608)) - float(1) * \
             (m_vref / float(pga_gain))
-
-    return voltage
-    # print('Voltage=', voltage)
+    # return voltage
+    print('Voltage=', voltage)
 
 
 # Fonction: Étalonnage de l'échelle zéro du système. L'utilisateur doit
@@ -801,37 +630,85 @@ def data_to_voltage(raw_data) -> float:
     # time.sleep(0.5)
 
 
-###########################################
-# Initialisation/Setting up AD7193/Pmod AD5
-###########################################
+########################################
+# Setting up AD7193
+########################################
 # resp = spi.xfer2([0xFF, 0xFF, 0xFF, 0xFF, 0xFF], 8000000, 100)
 reset()
-app_state_value_to_data(1)
+
+# [0x08] : Demande une Ecriture dans le MODE_REG depuis le COM_REG
+# [0x3C] : Single convertion mode, DAT_STA=1, Internal 4.92MHz clock is
+# used, clock is available on pin MCLK2, no avarasing
+# [0x3C] : SIN4 is used, ENPAR=1, CLK_DIV=2 (AVDD is less then 4.75V),
+# Single=1 for zero latency, REJ60=1 allows simultanous 50Hz/60Hz rejection,
+# [0x04] : FS=4
+# send_buf = [0x08, 0x3C, 0x3C, 0x04]
+send_buf = [AD7193_REG_MODE, 0x3C, 0x3C, 0x04]
+# swap_send_buf = swap_data(send_buf)
+resp1 = spi.xfer2(send_buf, 8000000, 1)
+print('Single conversion, Internale clock, REJ60=1, FS=4', resp1)
+time.sleep(0.5)
+
+# [0x10] : CONFIG_REG is selected
+# [0x80] : chop is anabled, vref in REFIN1, as differential inputs
+# [0x01] : Pseudo Bit=0, AIN1(+) and AIN2(-) are selected STAT_REG=000 ?
+# [0x00] : burn=0 burnout currents are uanable, REFDET off, BUF=0 input 50mV
+# below AGND to 50mV above AVDD, bipolar operation, gain = 1
+# When BUF=0 the analog voltage on the analog input pins can be from 50mV
+# below AGND to 50mV above AVDD
+# send_buf = [0x10, 0x00, 0x00, 0xC0]
+# send_buf = [0x10, 0x80, 0x01, 0x00]
+# swap_send_buf = swap_data(send_buf)
+# resp = spi.xfer2(send_buf, 8000000, 1, 8)
+# print('Set PGA Gain = 1, Buffer = 1', resp)
+# time.sleep(0.5)
 set_pga_gain(1)
-print('Set up Finalizing...')
-# set_averaging(3)
-# set_filter_rate(96)
-# set_pseudodiff_inputs(0)
-# set_polarity(0)
-# calibrate()
 
-try:
-    while True:
-        # resp_int = rd_adc_data()
-        # print('data:', resp_int)
-        valeur = read_adc_channel(0)
-        valeur = valeur >> 8  # Extraction of value
-        print("Data value: ", valeur)
-        tension = data_to_voltage(valeur)
-        print("\n")
-        print("Valeur= ", valeur)
-        print('\t')  # tabulation
-        print("Tension= ", tension, end=" ")
-        print("V")
+# [0x08] : Demande une Ecriture dans le MODE_REG depuis le COM_REG
+# [0x1C] : Continous convertion mode, DAT_STA=1, Internal 4.92MHz clock is
+# used, no avarasing
+# [0x3C] : SIN4 is used, ENPAR=1, CLK_DIV=2 (AVDD is less then 4.75V),
+# Single=1, REJ60=1,
+# [0x60] : FS=100
+# send_buf = [0x08, 0x1C, 0x3C, 0x60]
+# swap_send_buf = swap_data(send_buf)
+# resp = spi.xfer2(send_buf, 8000000, 1)
+# print('Setting filter rate select bits to 100', resp)
+# time.sleep(0.5)
 
-        time.sleep(0.5)
 
-finally:
-    spi.close()
-    GPIO.cleanup()
+# keep only the polarity bit
+# m_polarity = join_num(registerMap[2]) & 0x000008
+# print('Polarity', m_polarity)
+
+# keep only the PGA setting bits
+# pga_setting = join_num(registerMap[2]) & 0x000007
+# print('pga setting: ', pga_setting)
+
+while True:
+    # choose channel
+    # [0x10] : CONFIG_REG is selected
+    # [0x00] : chop is disabled, as differential inputs
+    # [0x01] : AIN1 and AIN2 are selected
+    # [0x00] : burn=0, no REFDET, BUF=1, bipolar operation, gain = 1
+    # send_buf = [0x10, 0x00, 0x00, 0xC0]
+    # send_buf = [0x10, 0x00, 0x01, 0x10]
+    # swap_send_buf = swap_data(send_buf)
+    # resp = spi.xfer2(send_buf)
+    # time.sleep(0.1)
+    reset()
+
+    # [0x58] : Demande une Lecture dans DATA_REG depuis le COM_REG
+    # pylint: disable=C0103
+    resp_int = rd_adc_data()
+    # print('data:', resp_int)
+    data_to_voltage(resp_int)
+    # """Ecrire pour effectuer la lecture"""
+    # resp = spi.xfer2([0x48, 0x00, 0x00, 0x00])
+    # time.sleep(0.1)
+    # print(registerMap[2])
+
+    # print('data:', resp)
+    time.sleep(0.8)
+
 # ############################## END OF CODE #################################

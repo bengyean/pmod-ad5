@@ -100,8 +100,6 @@ def swap_data(data):
 
 
 # Start read ADC Data
-# def unsigned long (ReadADCData()):
-# def read_adc_data() -> np.uint32:
 def read_adc_data():
     """Read Data from ADC"""
     byte_index = 0
@@ -111,22 +109,22 @@ def read_adc_data():
     # data_lenght = registerSize[3]
     data_lenght = 3
 
-    # spi.writebytes([0x58])      # command to start read data
-    # time.sleep(0.1)
+    spi.writebytes([0x58])      # command to start read data
+    time.sleep(0.1)
 
     while byte_index < data_lenght:
         try:
             # [0x58] : Demande une Lecture dans DATA_REG depuis le COM_REG
-            # Users write to the COM_REG indicate that they want to read 
+            # Users write to the COM_REG indicate that they want to read
             # the data and then clock in the 24 bits of data from the data
             #  register and finally pull the chip select line back to a high
             # voltage state. It is in the single conversion to read by step.
-            send_buf = [0x58, 0x00, 0x00, 0x00]
+            wr_buf = [0x00, 0x00, 0x00]
             # To enable continuous read, Instruction 01011100 must be written
             # to the communications register. Then uncomment the below ligne
             # send_buf = [0x5C, 0x00, 0x00, 0x00]
             # swap_send_buf = swap_data(send_buf)
-            receive_buffer = spi.xfer2(send_buf)
+            receive_buffer = spi.xfer2(wr_buf)
             receive_buffer = receive_buffer[1:]
             int_buffer = join_num(receive_buffer)
             print('int=', int_buffer)
@@ -166,7 +164,7 @@ def data_to_voltage(raw_data) -> float:
     else:
         pga_gain = 1
 
-    print('PGA Gain: ', pga_gain )
+    print('PGA Gain: ', pga_gain)
     # println(pga_gain)
 
     if m_polarity == 1:
